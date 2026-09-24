@@ -22,7 +22,7 @@ pipeline {
         stage('Build Backend Image') {
             steps {
                 dir('backend') {
-                    sh "docker build --platform linux/amd64 -t ${ECR_BACKEND}:latest ."
+                    sh "docker build --no-cache --platform linux/amd64 -t ${ECR_BACKEND}:latest ."
                 }
             }
         }
@@ -30,7 +30,7 @@ pipeline {
         stage('Build Frontend Image') {
             steps {
                 dir('frontend') {
-                    sh "docker build --platform linux/amd64 -t ${ECR_FRONTEND}:latest ."
+                    sh "docker build --no-cache  --platform linux/amd64 -t ${ECR_FRONTEND}:latest ."
                 }
             }
         }
