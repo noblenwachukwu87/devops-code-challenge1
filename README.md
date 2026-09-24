@@ -1,59 +1,44 @@
-# Overview
-This repository contains a React frontend, and an Express backend that the frontend connects to.
+## Setup Instructions
 
-# Objective
-Deploy the frontend and backend to somewhere publicly accessible over the internet. The AWS Free Tier should be more than sufficient to run this project, but you may use any platform and tooling you'd like for your solution.
+### Prerequisites
+- AWS CLI configured with credentials
+- Terraform installed
+- Docker installed
+- Git
 
-Fork this repo as a base. You may change any code in this repository to suit the infrastructure you build in this code challenge.
-
-# Submission
-1. A github repo that has been forked from this repo with all your code.
-2. Modify this README file with instructions for:
-* Any tools needed to deploy your infrastructure
-* All the steps needed to repeat your deployment process
-* URLs to the your deployed frontend.
-
-# Evaluation
-You will be evaluated on the ease to replicate your infrastructure. This is a combination of quality of the instructions, as well as any scripts to automate the overall setup process.
-
-# Setup your environment
-Install nodejs. Binaries and installers can be found on nodejs.org.
-https://nodejs.org/en/download/
-
-For macOS or Linux, Nodejs can usually be found in your preferred package manager.
-https://nodejs.org/en/download/package-manager/
-
-Depending on the Linux distribution, the Node Package Manager `npm` may need to be installed separately.
-
-# Running the project
-The backend and the frontend will need to run on separate processes. The backend should be started first.
+### 1. Clone and provision infrastructure
+```bash
+git clone https://github.com/noblenwachukwu87/devops-code-challenge1.git
+cd devops-code-challenge1/terraform
+terraform init
+terraform apply
 ```
-cd backend
-npm ci
-npm start
+
+### 2. Build and push Docker images to ECR
+```bash
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
+
+cd ../backend
+docker build --platform linux/amd64 -t <account-id>.dkr.ecr.us-east-1.amazonaws.com/devops-challenge1-backend:latest .
+docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/devops-challenge1-backend:latest
+
+cd ../frontend
+docker build --platform linux/amd64 -t <account-id>.dkr.ecr.us-east-1.amazonaws.com/devops-challenge1-frontend:latest .
+docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/devops-challenge1-frontend:latest
 ```
-The backend should response to a GET request on `localhost:8080`.
 
-With the backend started, the frontend can be started.
-```
-cd frontend
-npm ci
-npm start
-```
-The frontend can be accessed at `localhost:3000`. If the frontend successfully connects to the backend, a message saying "SUCCESS" followed by a guid should be displayed on the screen.  If the connection failed, an error message will be displayed on the screen.
+### 3. Force ECS to deploy the new images
+```bash
+aws ecs update-service --cluster devops-challenge1-cluster --service devops-challenge1-backend-service --force-new-deployment
+aws ecs update-service --cluster devops-challenge1-cluster --service devops-challenge1-frontend-service --force-new-deployment
 
-# Configuration
-The frontend has a configuration file at `frontend/src/config.js` that defines the URL to call the backend. This URL is used on `frontend/src/App.js#12`, where the front end will make the GET call during the initial load of the page.
+### 4. Access Jenkins for CI/CD
+Jenkins runs at `http://<jenkins-ec2-public-ip>:8080`. Credentials for GitHub and AWS are stored in Jenkins' credential store (`github-credentials`, `aws-access-key-id`, `aws-secret-access-key`).
 
-The backend has a configuration file at `backend/config.js` that defines the host that the frontend will be calling from. This URL is used in the `Access-Control-Allow-Origin` CORS header, read in `backend/index.js#14`
+## Challenges & Solutions
 
-# Optional Extras
-The core requirement for this challenge is to get the provided application up and running for consumption over the public internet. That being said, there are some opportunities in this code challenge to demonstrate your skill sets that are above and beyond the core requirement.
+**Stale Docker image despite correct source code**
+After confirming a config fix was committed and pushed to GitHub, the deployed frontend still exhibited the old behavior. Investigation traced this to Docker reusing a cached build layer during the image build, even though the underlying source file had changed — meaning the image tagged `:latest` in ECR didn't actually reflect the latest commit. Diagnosed by pulling the deployed image locally and grepping the compiled bundle for the stale reference, confirming a mismatch between source and artifact. Fixed by adding `--no-cache` to the Jenkinsfile's Docker build steps, ensuring every CI run rebuilds fully from source rather than trusting cached layers.
 
-A few examples of extras for this coding challenge:
-1. Dockerizing the application
-2. Scripts to set up the infrastructure
-3. Providing a pipeline for the application deployment
-4. Running the application in a serverless environment
-
-This is not an exhaustive list of extra features that could be added to this code challenge. At the end of the day, this section is for you to demonstrate any skills you want to show that’s not captured in the core requirement.
+**Cross-architecture image incompatibility (ARM64 vs. x86_64)**
+Docker images built locally on an Apple Silicon Mac defaulted to the ARM64 architecture, but AWS Fargate requires linux/amd64. Tasks failed to start with a `CannotPullContainerError` citing a platform mismatch, despite the image existing and being valid. Resolved by explicitly specifying `--platform linux/amd64` on every `docker build` command, both locally and in the CI pipeline — a necessary step for any team with a mix of Apple Silicon and x86 developer machines deploying to standard cloud infrastructure.
